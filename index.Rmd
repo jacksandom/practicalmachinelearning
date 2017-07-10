@@ -1,0 +1,153 @@
+---
+title: "Human Activity Recognition (Coursera Project)"
+author: "Jack Sandom"
+date: "10 July 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Executive Summary
+
+This project aimed to use data from accelerometers to correctly predict if barbell exercises were performed correctly. The data set was divided into training, validation and test sets and then the training set was used to train two common machine learning models (no more models could be tested due to system limitations). This was then cross-validated against the validation set before running the model on the test set to return our final accuracy. Using the above technique, we selected boosting as our final model with an overall accuracy of 98% on our validation set. When used against the testing set consisting of 20 different test cases, the accuracy was 100%.
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, our goal was to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Data set).
+
+## Data Exploration and Visualisation
+
+We began by loading both the [training](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv) and [testing](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv) data sets.
+
+```{r}
+train <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+dim(train); dim(test)
+```
+
+For the purposes of this investigation, we were only interested in the explanatory variables related to movements from the accelerators so we subset out the first seven columns and set the others as numeric (except the dependent variable, *classe*). 
+
+```{r}
+train <- train[,8:160]
+test <- test[,8:160]
+train[,1:152] <- sapply(train[,-153],as.numeric)
+test[,1:152] <- sapply(test[,-153],as.numeric)
+```
+
+The data set contains a number of missing values and due to the size of the testing set, the best strategy is to exclude the predictors from our procedures. 100 such predictors were found leaving 52 predictor variables.
+
+```{r}
+na <- sapply(test, function(x) any(is.na(x)))
+train <- train[,!na]
+test <- test[,!na]
+```
+
+We then created the validation data set from the training set using a 70/30 split.
+
+```{r}
+library(caret)
+inTrain <- createDataPartition(y=train$classe, p=0.7, list=FALSE)
+train <- train[inTrain,]
+validate <- train[-inTrain,]
+remove(inTrain); remove(na)
+```
+
+The number of observations in each data set can be seen below.
+
+```{r}
+dim(train)[1]; dim(validate)[1]; dim(test)[1]
+```
+
+As some exploratory analysis, we compared the correlations between the 52 variables and the dependent variable, *classe*.
+
+```{r}
+y <- as.numeric(train[,53])
+cors <- cor(train[,-53],y=y)
+cors <- cbind.data.frame(row.names(cors),cors[,1])
+colnames(cors) <- c("feature","corr")
+rownames(cors) <- 1:nrow(cors)
+cors <- cors[order(-abs(cors$corr)),]
+cors[1:2,]; remove(cors)
+```
+
+The two features with the highest correlation to the output can be seen above. We produced some plots to determine if there were any obvious trends in the data from this.
+
+```{r}
+library(ggplot2)
+ggplot(train, aes(pitch_forearm, magnet_belt_y)) + geom_point(col="#CD5C5C", alpha=0.2) + xlab("Pitch Forearm") + ylab("Magnet Belt Y") + facet_grid(. ~ train$classe)
+```
+
+One trend we could see from this initial analysis was that only exercises in classe D and E had a Magnet Belt Y number that fell below 550. In terms of Pitch Forearm, classe A exercises seem to have a wider spread than others and classe E exercises mostly return a number above zero. With the information from two features alone, we could develop a simple model and form some basic predictions. Instead we decided to incorporate all of the features in our data set and use the machine learning models built into R to develop more sophisticated models.
+
+## Classification Models
+
+For this analysis, we used three machine learning models: classification tree, random forest and boosting and assessed each of them by accuracy on our validation data set to decide our final model. **Due to system limitations, we were unable to run the bagging and random forest models and therefore they will not be used in our analysis**.
+
+### Classification tree
+
+Classification trees iteratively split variables into groups by evaluating the "homogeneity" within each group. Within each split, it finds the best variable/split that separates the outcomes and continues to split until the groups are too small or sufficiently "pure". 
+
+We started by loading the required packages, building our *rpart* model and creating a plot of our tree model.
+
+```{r}
+library(rpart); library(rpart.plot); library(rattle)
+set.seed(2828)
+fit1 <- train(classe ~ ., data=train, method="rpart")
+fancyRpartPlot(fit1$finalModel)
+```
+
+We than predicted our model on our validation data set and created a confusion matrix to find our overall accuracy.
+
+```{r}
+pred1 <- predict(fit1, validate)
+cm1 <- confusionMatrix(pred1, validate$classe)
+cm1$table
+```
+
+The overall accuracy of the classification tree model is 47.92%. It had the most difficulty in classifying D which was not predicted at all using this model. 
+
+### Boosting
+
+Boosting works by converting weak learners to strong learners by combining the prediction of each weak learner.
+
+We performed this in R with the *gbm* method using three fold cross validation.
+
+```{r}
+fit2 <- train(classe ~ ., data=train, method="gbm", verbose = FALSE, trControl = trainControl(method="cv", number = 3))
+pred2 <- predict(fit2, validate)
+cm2 <- confusionMatrix(pred2, validate$classe)
+cm2$overall; cm2$table
+```
+
+We find that the boosting model is a lot more accurate with an overall accuracy of 98.17%.
+
+## Model Selection
+
+From our classification models, there is a clear choice with the boosting model having a far better overall accuracy. If the accuracies were closer, we would look more closely at specificity versus sensitivity to make our decision but it is not needed in this case. It should be noted that both random forest and boosting are known to be very accurate in a lot of machine learning problems and it is possible that they would result in even more accuracy. However due to the system we are using, we are unable to run these models and nonetheless, 98% accuracy in our validation set suggests that boosting is a reliable model. 
+
+Using the *varImp* function, we can look at the most important features according to the boosting model.
+
+```{r}
+plot(varImp(fit2), top = 10)
+```
+
+From the above it can be seen that the roll belt movement has the highest importance in our model. 
+
+## Final Prediction
+
+Finally, we will use the boosting model to predict the test data.
+
+```{r}
+preds <- predict(fit2, test)
+predFinal <- cbind.data.frame(test$problem_id, preds)
+colnames(predFinal) <- c("ProblemID","Prediction")
+predFinal
+```
+
+We inputted this result into the final Coursera project prediction quiz and the result was 100%.
+
+## Conclusion
+
+We compared the performance of two methods and selected boosting as our prediction model. It would have been ideal to run both bagging and random forest models to potentially further improve the model performance. However when running on the test set data, the boosting model proved highly accurate. For future work we could also use models with combined predictors to further fine tune our model.
